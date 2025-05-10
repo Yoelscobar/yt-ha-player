@@ -17,7 +17,8 @@
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
       gap: 10px;
-      grid-auto-rows: minmax(280px, auto);
+      /* Adjusted to make cards a bit taller to accommodate new info */
+      grid-auto-rows: minmax(300px, auto);
     }
 
     .videoCard {
@@ -34,21 +35,51 @@
 
     .videoThumbnail {
       width: 100%;
-      height: 140px;
+      height: 140px; /* Beibehalten */
       object-fit: cover;
     }
 
-    .videoTitle {
-      flex: 1;
-      margin: 10px;
-      font-size: 14px;
+    .videoInfo { /* Container für alle Textdetails unter dem Thumbnail */
+      padding: 0 10px;
+      flex-grow: 1; /* Nimmt verfügbaren Platz ein */
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start; /* Beginnt oben */
       overflow: hidden;
     }
+
+    .videoTitle {
+      font-size: 14px;
+      font-weight: bold;
+      margin: 8px 0;
+      /* Für mehrzeiligen Textumbruch, falls gewünscht (ggf. Höhe anpassen) */
+      white-space: normal;
+      overflow-wrap: break-word;
+      display: -webkit-box;
+      -webkit-line-clamp: 2; /* Zeigt max 2 Zeilen, dann ... */
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-height: 2.4em; /* Platz für ca. 2 Zeilen */
+    }
+
+    .videoDetails { /* Für Typ, Dauer, Künstler etc. */
+      font-size: 12px;
+      color: #aaa;
+      margin-bottom: 5px;
+      line-height: 1.3;
+    }
+    .videoDetails span { /* Für bessere Lesbarkeit der Labels */
+        font-weight: bold;
+        color: #ccc;
+    }
+
 
     .buttonRow {
       display: flex;
       justify-content: space-around;
       margin: 10px;
+      padding-top: 5px; /* Etwas Abstand nach oben */
     }
 
     .playButton {
@@ -57,6 +88,7 @@
       border: none;
       padding: 6px 10px;
       border-radius: 4px;
+      cursor: pointer;
     }
     .playButton:hover { background-color: #cc0000; }
 
@@ -66,6 +98,7 @@
       border: none;
       padding: 6px 10px;
       border-radius: 4px;
+      cursor: pointer;
     }
     .enqueueButton:hover { background-color: #008800; }
 
@@ -91,7 +124,7 @@
 <body>
   <h1>YouTube & YouTube Music Search</h1>
   <div id="searchContainer">
-    <input type="text" id="searchQuery" placeholder="Search...">
+    <input type="text" id="searchQuery" placeholder="Search..." onkeyup="if(event.key==='Enter') search()">
     <button onclick="search()">Search</button>
   </div>
   <div id="resultsContainer">
@@ -117,91 +150,213 @@
 
     async function search() {
       const q = encodeURIComponent(document.getElementById('searchQuery').value);
+      if (!q) {
+        showToast('Please enter a search query.', 3000);
+        return;
+      }
+
       // YouTube
-      const yt = await fetch(`/search/youtube?q=${q}`).then(r => r.json());
-      const ytd = document.getElementById('youtubeResults');
-      ytd.innerHTML = '';
-      yt.forEach(v => {
-        const c = document.createElement('div');
-        c.className = 'videoCard';
-        c.innerHTML = `
-          <img class="videoThumbnail" src="${v.thumbnail}" alt="">
-          <div class="videoTitle">${v.title}</div>
-          <div class="buttonRow">
-            <button class="playButton" onclick="sendToHomeAssistant('${v.videoId}','youtube')">▶︎ Play TV</button>
-          </div>
-        `;
-        ytd.appendChild(c);
-      });
+      document.getElementById('youtubeResults').innerHTML = '<em>Loading YouTube results...</em>';
+      try {
+        const ytResponse = await fetch(`/search/youtube?q=${q}`);
+        if (!ytResponse.ok) throw new Error(`Youtube failed: ${ytResponse.statusText}`);
+        const yt = await ytResponse.json();
+        
+        const ytd = document.getElementById('youtubeResults');
+        ytd.innerHTML = ''; // Clear previous results or loading message
+        if (yt.length === 0) {
+            ytd.innerHTML = '<em>No YouTube results found.</em>';
+        }
+        yt.forEach(v => {
+          const c = document.createElement('div');
+          c.className = 'videoCard';
+          c.innerHTML = `
+            <img class="videoThumbnail" src="${v.thumbnail}" alt="${v.title}" loading="lazy">
+            <div class="videoInfo">
+              <div class="videoTitle" title="${v.title}">${v.title}</div>
+              <div class="videoDetails">
+                <span>Duration:</span> ${v.duration || 'N/A'}
+              </div>
+            </div>
+            <div class="buttonRow">
+              <button class="playButton" onclick="sendToHomeAssistant('${v.videoId}','youtube')">▶︎ Play TV</button>
+            </div>
+          `;
+          ytd.appendChild(c);
+        });
+      } catch (error) {
+        console.error("Youtube Error:", error);
+        document.getElementById('youtubeResults').innerHTML = '<em>Error loading YouTube results.</em>';
+        showToast(`YouTube Error: ${error.message}`, 5000);
+      }
+
       // YouTube Music
-      const ym = await fetch(`/search/ytmusic?q=${q}`).then(r => r.json());
-      const ymd = document.getElementById('ytmusicResults');
-      ymd.innerHTML = '';
-      ym.forEach(track => {
-        const c = document.createElement('div');
-        c.className = 'videoCard';
-        c.innerHTML = `
-          <img class="videoThumbnail" src="${track.thumbnail}" alt="">
-          <div class="videoTitle">${track.title}</div>
-          <div class="buttonRow">
-            <button class="playButton" onclick="playNow('${track.videoId}')">▶︎ Now</button>
-            <button class="enqueueButton" onclick="playNext('${track.videoId}')">＋ Next</button>
-          </div>
-        `;
-        ymd.appendChild(c);
-      });
+      document.getElementById('ytmusicResults').innerHTML = '<em>Loading YouTube Music results...</em>';
+      try {
+        const ymResponse = await fetch(`/search/ytmusic?q=${q}`);
+        if (!ymResponse.ok) throw new Error(`YouTube Music search failed: ${ymResponse.statusText}`);
+        const ym = await ymResponse.json();
+
+        const ymd = document.getElementById('ytmusicResults');
+        ymd.innerHTML = ''; // Clear previous results or loading message
+        if (ym.length === 0) {
+            ymd.innerHTML = '<em>No YouTube Music results found.</em>';
+        }
+        ym.forEach(item => {
+          const c = document.createElement('div');
+          c.className = 'videoCard';
+          
+          let detailsHtml = '';
+          let primaryId = item.videoId; // Default to videoId for playability
+
+          if (item.type === 'song' || item.type === 'video') {
+              detailsHtml = `<span>Type:</span> ${item.type.charAt(0).toUpperCase() + item.type.slice(1)}<br>
+                             <span>Duration:</span> ${item.duration || 'N/A'}<br>
+                             <span>Artist:</span> ${item.artist || 'N/A'}`;
+          } else if (item.type === 'album') {
+              detailsHtml = `<span>Type:</span> Album<br>
+                             <span>Artist:</span> ${item.artist || 'N/A'}<br>
+                             <span>Year:</span> ${item.year || 'N/A'}`;
+              primaryId = item.browseId; // Use browseId for albums
+          } else if (item.type === 'playlist') {
+              detailsHtml = `<span>Type:</span> Playlist<br>
+                             <span>By:</span> ${item.artist || 'N/A'}<br>
+                             <span>Tracks:</span> ${item.itemCount || 'N/A'}`;
+              primaryId = item.playlistId; // Use playlistId for playlists
+          } else {
+              detailsHtml = `<span>Type:</span> ${item.type ? item.type.charAt(0).toUpperCase() + item.type.slice(1) : 'Unknown'}`;
+          }
+
+          // Fallback if primaryId is still null (should not happen based on ytmusic_search.py logic)
+          if (!primaryId && item.videoId) primaryId = item.videoId; 
+          
+          c.innerHTML = `
+            <img class="videoThumbnail" src="${item.thumbnail || 'placeholder.png'}" alt="${item.title}" loading="lazy">
+            <div class="videoInfo">
+              <div class="videoTitle" title="${item.title}">${item.title}</div>
+              <div class="videoDetails">
+                ${detailsHtml}
+              </div>
+            </div>
+            <div class="buttonRow">
+              ${ (item.type === 'song' || item.type === 'video') && item.videoId ? 
+                `<button class="playButton" onclick="playNow('${item.videoId}')">▶︎ Now</button>
+                 <button class="enqueueButton" onclick="playNext('${item.videoId}')">＋ Next</button>` :
+                (item.type === 'album' && item.browseId) || (item.type === 'playlist' && item.playlistId) ?
+                `<button class="playButton" title="Play for Album/Playlist not fully implemented for this ID type" onclick="handleCollectionPlay('${primaryId}', '${item.type}')" disabled>▶︎ Play Collection</button>` :
+                ''
+              }
+            </div>
+          `;
+          ymd.appendChild(c);
+        });
+      } catch (error) {
+        console.error("YouTube Music Search Error:", error);
+        document.getElementById('ytmusicResults').innerHTML = '<em>Error loading YouTube Music results.</em>';
+        showToast(`YouTube Music Error: ${error.message}`, 5000);
+      }
+    }
+
+    // Placeholder function for handling album/playlist play actions
+    // This would require backend changes to support browseId/playlistId
+    function handleCollectionPlay(id, type) {
+        showToast(`Playing ${type} (${id}) is not yet fully supported with current backend.`, 5000);
+        // Future: You might want to fetch the first track of an album/playlist
+        // or have specific backend endpoints to handle these types.
+        // For now, one could try to pass it to playNow, if the backend /play_ytmusic
+        // is adapted to query the first track ID from a browseId/playlistId.
+        // playNow(id); // This would currently send browseId/playlistId to /play_ytmusic
     }
 
     async function sendToHomeAssistant(id, platform) {
       try {
-        await fetch('http://192.168.1.16:8123/api/webhook/play_youtube', {
+        const response = await fetch('http://192.168.1.16:8123/api/webhook/play_youtube', { // DEINE HA IP & PORT
           method: 'POST',
           headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ videoId: id, platform })
         });
+        if (!response.ok) throw new Error(`HA webhook failed: ${response.statusText}`);
         showToast('Sent to TV!');
-      } catch {
-        showToast('Error connecting to HA', 5000);
+      } catch(error) {
+        console.error("Home Assistant Error:", error);
+        showToast(`Error connecting to HA: ${error.message}`, 5000);
       }
     }
 
     async function playNow(videoId) {
-      const streamUrl = `x-rincon-mp3radio://192.168.1.23:3000/stream/${videoId}`;
-      // 1) Icecast starten
-      let r = await fetch('/play_ytmusic',{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ videoId })
-      });
-      if (!r.ok) return showToast('Icecast error',5000);
-      // 2) kurz warten
-      await new Promise(r => setTimeout(r,2000));
-      // 3) abspielen
-      await fetch('http://192.168.1.16:8123/api/webhook/play_music_streamer', {
-        method:'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            url: 'x-rincon-mp3radio://192.168.1.23:3000/sonos_stream'
-            })
+      // Stellt sicher, dass videoId ein String ist und nicht null/undefined
+      if (!videoId || typeof videoId !== 'string') {
+        showToast('Invalid Video ID for Play Now.', 5000);
+        console.error('playNow called with invalid videoId:', videoId);
+        return;
+      }
+      const streamUrl = `x-rincon-mp3radio://192.168.1.23:3000/stream/${videoId}`; // DEINE SERVER IP & PORT (wo server.js läuft)
+      try {
+        // 1) Ziel-Server (ytmusic_streamer via server.js) anweisen, den Stream vorzubereiten
+        let r = await fetch('/play_ytmusic',{ // Dieser Call geht an deinen server.js
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ videoId }) // server.js /play_ytmusic erwartet { videoId }
         });
-      showToast('Playing now');
+        if (!r.ok) {
+            const errorData = await r.json().catch(() => ({ message: 'Unknown Icecast setup error' }));
+            throw new Error(`Icecast setup error: ${errorData.message || r.statusText}`);
+        }
+        
+        // 2) kurz warten, damit der Stream bereit ist
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // 3) Home Assistant anweisen, den Sonos-Stream abzuspielen
+        // Der Sonos-Stream wird von deinem server.js unter /sonos_stream bereitgestellt
+        await fetch('http://192.168.1.16:8123/api/webhook/play_music_streamer', { // DEINE HA IP & PORT
+          method:'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            url: `x-rincon-mp3radio://192.168.1.23:3000/sonos_stream` // URL zeigt auf deinen server.js Proxy
+            })
+          });
+        showToast('Playing now on Sonos');
+      } catch (error) {
+        console.error("PlayNow Error:", error);
+        showToast(`PlayNow Error: ${error.message}`, 5000);
+      }
     }
 
     async function playNext(videoId) {
-      const streamUrl = `x-rincon-mp3radio://192.168.1.23:3000/stream/${videoId}`;
-      // 1) Icecast starten (falls nicht)
-      await fetch('/play_ytmusic',{
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ videoId })
-      });
-      // 2) kurz warten
-      await new Promise(r => setTimeout(r,1000));
-      // 3) enqueuen
-      await fetch('http://192.168.1.16:8123/api/webhook/play_music_streamer_next', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ url: streamUrl })
-      });
-      showToast('Added to queue');
+       // Stellt sicher, dass videoId ein String ist und nicht null/undefined
+      if (!videoId || typeof videoId !== 'string') {
+        showToast('Invalid Video ID for Play Next.', 5000);
+        console.error('playNext called with invalid videoId:', videoId);
+        return;
+      }
+      // Der Stream, der zur Sonos Queue hinzugefügt wird. Dieser wird direkt von yt-dlp via /stream/:videoId bedient.
+      const streamUrl = `x-rincon-mp3radio://192.168.1.23:3000/stream/${videoId}`; // DEINE SERVER IP & PORT (wo server.js läuft)
+      try {
+        // 1) Server anweisen, den Stream (theoretisch) vorzubereiten oder zumindest zu validieren, falls nötig.
+        //    Der /play_ytmusic call hier ist evtl. nicht strikt notwendig für playNext,
+        //    wenn der /stream/:videoId Endpunkt on-demand funktioniert, was er tut.
+        //    Er könnte aber nützlich sein, um den ytmusic_streamer (Icecast) zu "wecken" oder
+        //    sicherzustellen, dass er nicht mit einem anderen Track blockiert ist, falls playNext denselben Mechanismus nutzen soll.
+        //    Für das direkte Enqueueing eines /stream/:videoId ist dieser Call an /play_ytmusic hier wahrscheinlich nicht nötig,
+        //    daher kommentiere ich ihn mal aus, um Verwirrung zu vermeiden, da der Enqueue-Pfad direkt /stream/:videoId nutzt.
+        /*
+        await fetch('/play_ytmusic',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ videoId })
+        });
+        await new Promise(resolve => setTimeout(resolve,1000)); // Warten, falls der obige Call doch was macht
+        */
+
+        // 2) Home Assistant anweisen, den Stream zur Sonos Queue hinzuzufügen
+        await fetch('http://192.168.1.16:8123/api/webhook/play_music_streamer_next', { // DEINE HA IP & PORT
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ url: streamUrl }) // Hier wird der direkte Stream-URL für den Track übergeben
+        });
+        showToast('Added to Sonos queue');
+      } catch (error) {
+        console.error("PlayNext Error:", error);
+        showToast(`PlayNext Error: ${error.message}`, 5000);
+      }
     }
   </script>
 </body>
