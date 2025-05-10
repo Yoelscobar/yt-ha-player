@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>YouTube & YouTube Music Search</title>
+  <style>
+    body { font-family: Arial, sans-serif; background-color: #121212; color: #fff; padding: 20px; }
+    h1 { text-align: center; }
+    #searchContainer { text-align: center; margin-bottom: 20px; }
+    #searchQuery { width: 300px; padding: 8px; font-size: 16px; }
+    button { font-size: 16px; cursor: pointer; }
+    #resultsContainer { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .resultsSection { background-color: #1e1e1e; padding: 10px; border-radius: 8px; }
+    .resultsSection h2 { text-align: center; }
+
+    .resultsGrid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+      grid-auto-rows: minmax(280px, auto);
+    }
+
+    .videoCard {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      height: 100%;
+      background-color: #2a2a2a;
+      border-radius: 8px;
+      overflow: hidden;
+      transition: transform 0.2s;
+    }
+    .videoCard:hover { transform: scale(1.03); }
+
+    .videoThumbnail {
+      width: 100%;
+      height: 140px;
+      object-fit: cover;
+    }
+
+    .videoTitle {
+      flex: 1;
+      margin: 10px;
+      font-size: 14px;
+      overflow: hidden;
+    }
+
+    .buttonRow {
+      display: flex;
+      justify-content: space-around;
+      margin: 10px;
+    }
+
+    .playButton {
+      background-color: #ff0000;
+      color: #fff;
+      border: none;
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
+    .playButton:hover { background-color: #cc0000; }
+
+    .enqueueButton {
+      background-color: #00aa00;
+      color: #fff;
+      border: none;
+      padding: 6px 10px;
+      border-radius: 4px;
+    }
+    .enqueueButton:hover { background-color: #008800; }
+
+    /* Toast */
+    #toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 4px;
+      font-size: 14px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+      z-index: 1000;
+    }
+    #toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <h1>YouTube & YouTube Music Search</h1>
+  <div id="searchContainer">
+    <input type="text" id="searchQuery" placeholder="Search...">
+    <button onclick="search()">Search</button>
+  </div>
+  <div id="resultsContainer">
+    <div class="resultsSection">
+      <h2>YouTube</h2>
+      <div id="youtubeResults" class="resultsGrid"></div>
+    </div>
+    <div class="resultsSection">
+      <h2>YouTube Music</h2>
+      <div id="ytmusicResults" class="resultsGrid"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script>
+    function showToast(msg, duration = 3000) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), duration);
+    }
+
+    async function search() {
+      const q = encodeURIComponent(document.getElementById('searchQuery').value);
+      // YouTube
+      const yt = await fetch(`/search/youtube?q=${q}`).then(r => r.json());
+      const ytd = document.getElementById('youtubeResults');
+      ytd.innerHTML = '';
+      yt.forEach(v => {
+        const c = document.createElement('div');
+        c.className = 'videoCard';
+        c.innerHTML = `
+          <img class="videoThumbnail" src="${v.thumbnail}" alt="">
+          <div class="videoTitle">${v.title}</div>
+          <div class="buttonRow">
+            <button class="playButton" onclick="sendToHomeAssistant('${v.videoId}','youtube')">▶︎ Play TV</button>
+          </div>
+        `;
+        ytd.appendChild(c);
+      });
+      // YouTube Music
+      const ym = await fetch(`/search/ytmusic?q=${q}`).then(r => r.json());
+      const ymd = document.getElementById('ytmusicResults');
+      ymd.innerHTML = '';
+      ym.forEach(track => {
+        const c = document.createElement('div');
+        c.className = 'videoCard';
+        c.innerHTML = `
+          <img class="videoThumbnail" src="${track.thumbnail}" alt="">
+          <div class="videoTitle">${track.title}</div>
+          <div class="buttonRow">
+            <button class="playButton" onclick="playNow('${track.videoId}')">▶︎ Now</button>
+            <button class="enqueueButton" onclick="playNext('${track.videoId}')">＋ Next</button>
+          </div>
+        `;
+        ymd.appendChild(c);
+      });
+    }
+
+    async function sendToHomeAssistant(id, platform) {
+      try {
+        await fetch('http://192.168.1.16:8123/api/webhook/play_youtube', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ videoId: id, platform })
+        });
+        showToast('Sent to TV!');
+      } catch {
+        showToast('Error connecting to HA', 5000);
+      }
+    }
+
+    async function playNow(videoId) {
+      const streamUrl = `x-rincon-mp3radio://192.168.1.23:3000/stream/${videoId}`;
+      // 1) Icecast starten
+      let r = await fetch('/play_ytmusic',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ videoId })
+      });
+      if (!r.ok) return showToast('Icecast error',5000);
+      // 2) kurz warten
+      await new Promise(r => setTimeout(r,2000));
+      // 3) abspielen
+      await fetch('http://192.168.1.16:8123/api/webhook/play_music_streamer', {
+        method:'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            url: 'x-rincon-mp3radio://192.168.1.23:3000/sonos_stream'
+            })
+        });
+      showToast('Playing now');
+    }
+
+    async function playNext(videoId) {
+      const streamUrl = `x-rincon-mp3radio://192.168.1.23:3000/stream/${videoId}`;
+      // 1) Icecast starten (falls nicht)
+      await fetch('/play_ytmusic',{
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ videoId })
+      });
+      // 2) kurz warten
+      await new Promise(r => setTimeout(r,1000));
+      // 3) enqueuen
+      await fetch('http://192.168.1.16:8123/api/webhook/play_music_streamer_next', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ url: streamUrl })
+      });
+      showToast('Added to queue');
+    }
+  </script>
+</body>
+</html>

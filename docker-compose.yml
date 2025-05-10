@@ -1,0 +1,30 @@
+services:
+  youtube_search:
+    build: ./youtube
+    container_name: youtube_search
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./youtube:/app
+      - ./ytmusic-search:/app/ytmusic-search
+
+
+
+  ytmusic_streamer:
+    depends_on:
+      - youtube_search
+      - icecast
+    build: ./ytmusic-streamer
+    container_name: ytmusic_streamer
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./ytmusic-streamer:/home/streamer
+
+  icecast:
+    image: moul/icecast
+    container_name: icecast
+    ports:
+      - "8000:8000"
