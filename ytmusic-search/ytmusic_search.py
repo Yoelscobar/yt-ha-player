@@ -22,40 +22,27 @@ def format_duration_seconds(seconds):
         return "N/A"
 
 def get_best_thumbnail_url(thumbnails_list):
-    """
-    Wählt das beste verfügbare Thumbnail aus der Liste.
-    Bevorzugt größere Auflösungen.
-    """
     if not isinstance(thumbnails_list, list) or not thumbnails_list:
-        return "https://placehold.co/200x140/2a2a2a/ccc?text=No+Image" # Standard-Platzhalter
+        return "https://placehold.co/200x140/2a2a2a/ccc?text=No+Image" 
 
-    # Sortiere Thumbnails nach Breite (absteigend), falls vorhanden, ansonsten nimm das letzte.
-    # YTMusicAPI gibt oft Thumbnails mit 'width' und 'height' Angaben zurück.
     try:
-        # Versuche, nach Breite zu sortieren, wenn 'width' vorhanden ist
         sorted_thumbnails = sorted(
             [thumb for thumb in thumbnails_list if isinstance(thumb, dict) and 'width' in thumb and 'url' in thumb],
             key=lambda x: x['width'],
             reverse=True
         )
         if sorted_thumbnails:
-            # Wähle ein Thumbnail, das nicht zu klein ist, z.B. >= 200px Breite
             for thumb in sorted_thumbnails:
                 if thumb['width'] >= 200:
                     return thumb['url']
-            return sorted_thumbnails[0]['url'] # Nimm das größte, wenn alle < 200px sind
+            return sorted_thumbnails[0]['url'] 
     except (TypeError, KeyError):
-        # Fallback, wenn 'width' nicht vorhanden ist oder Sortierung fehlschlägt
         pass
 
-    # Fallback: Nimm das letzte Thumbnail in der Liste, da es oft das größte ist,
-    # oder das erste, wenn es nur eines gibt.
     best_thumb = thumbnails_list[-1]
     if isinstance(best_thumb, dict) and 'url' in best_thumb:
         return best_thumb['url']
     
-    # Allerletzter Fallback, wenn die Struktur unerwartet ist
-    # (z.B. wenn die Liste nur ein Element hat und der obige Zugriff fehlschlägt)
     if thumbnails_list and isinstance(thumbnails_list[0], dict) and 'url' in thumbnails_list[0]:
         return thumbnails_list[0]['url']
         
@@ -71,7 +58,7 @@ def main():
     
     try:
         ytmusic = YTMusic()
-        search_results_raw = ytmusic.search(query, filter=None, limit=20)
+        search_results_raw = ytmusic.search(query, filter=None, limit=20) 
     except Exception as e:
         error_output = {
             "error": f"Failed to initialize YTMusic or perform search: {str(e)}",
@@ -102,6 +89,8 @@ def main():
                 continue
 
             item_type_raw = item.get('resultType')
+            item_type = "" 
+
             if isinstance(item_type_raw, str):
                 item_type = item_type_raw.lower() 
             else:
@@ -118,13 +107,12 @@ def main():
             if not title: 
                 continue
             
-            # Thumbnail-Auswahl verbessert
             thumbnail_url = get_best_thumbnail_url(item.get('thumbnails'))
             
             entry = {
                 'title': title,
                 'thumbnail': thumbnail_url,
-                'type': item_type,
+                'type': item_type, 
                 'duration': "N/A",
                 'videoId': None,      
                 'browseId': None,     
@@ -133,8 +121,7 @@ def main():
                 'year': None,         
                 'itemCount': None     
             }
-
-            unique_identifier = None
+            unique_identifier = None 
 
             if item_type == 'song' or item_type == 'video':
                 entry['videoId'] = item.get('videoId')
@@ -152,10 +139,32 @@ def main():
                     entry['artist'] = str(artists_data)
 
             elif item_type == 'album':
-                entry['browseId'] = item.get('browseId') 
-                unique_identifier = entry['browseId']
+                temp_browse_id = item.get('browseId')
+                # Versuche, eine audioPlaylistId zu finden, die oft für EPs/Singles verwendet wird
+                # oder eine normale playlistId, falls vorhanden.
+                # Die Struktur von 'item' kann variieren, daher mehrere Checks.
+                found_playlist_id = item.get('audioPlaylistId') or item.get('playlistId')
+
+                if temp_browse_id and temp_browse_id.startswith('MPRE'):
+                    entry['browseId'] = temp_browse_id
+                    unique_identifier = temp_browse_id
+                    # Typ bleibt 'album'
+                elif found_playlist_id:
+                    # Es ist als 'album' klassifiziert, hat aber keine MPRE-browseId,
+                    # aber wir haben eine playlistId gefunden! Behandle es als Playlist.
+                    print(f"[YTMusicSearch DEBUG] Item originally 'album' (ID: '{temp_browse_id}'), but found playlistId ('{found_playlist_id}'). Reclassifying as 'playlist'. Full item: {json.dumps(item)}", file=sys.stderr)
+                    entry['type'] = 'playlist' # Umklassifizieren!
+                    entry['playlistId'] = found_playlist_id
+                    entry['browseId'] = None # Sicherstellen, dass die ungültige browseId nicht verwendet wird
+                    unique_identifier = found_playlist_id
+                else:
+                    # Weder MPRE-browseId noch eine alternative playlistId gefunden.
+                    print(f"[YTMusicSearch DEBUG] Item classified as 'album' but browseId ('{temp_browse_id}') does not start with 'MPRE' and no fallback playlistId found. Full item: {json.dumps(item)}", file=sys.stderr)
+                    entry['type'] = 'album_unsupported_id' 
+                    entry['browseId'] = None 
+                    unique_identifier = temp_browse_id # Für processed_ids, um Duplikate zu vermeiden
+
                 entry['year'] = str(item.get('year')) if item.get('year') else None
-                
                 artists_data = item.get('artists') 
                 if isinstance(artists_data, list) and artists_data and isinstance(artists_data[0], dict):
                     entry['artist'] = artists_data[0].get('name', "N/A")
@@ -176,10 +185,16 @@ def main():
                         entry['itemCount'] = str(int(item_count_raw))
                     except ValueError:
                         entry['itemCount'] = None
-
+            
+            # Verhindere Duplikate basierend auf dem unique_identifier
             if unique_identifier and unique_identifier not in processed_ids:
                 output.append(entry)
                 processed_ids.add(unique_identifier)
+            # Fallback für 'album_unsupported_id', falls es einen temp_browse_id hatte aber unique_identifier None wurde
+            elif entry['type'] == 'album_unsupported_id' and temp_browse_id and temp_browse_id not in processed_ids:
+                 output.append(entry)
+                 processed_ids.add(temp_browse_id)
+
             
             if len(output) >= 15: 
                 break
